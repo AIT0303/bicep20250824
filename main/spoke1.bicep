@@ -1,4 +1,3 @@
-
 targetScope = 'subscription'
 
 // パラメータ定義
@@ -6,57 +5,73 @@ param development string = 'poc'
 param role string = 'spoke1'
 param location string = 'japaneast'
 param rgName string = '${development}-${role}-rg'
-param hub1ResourceGroup string = '${development}-hub1-rg'
-param vnetName string = '${development}-hub1-vnet01'
 param acrName string = '${development}spoke4acr01'
 param acrRg string = '${development}-spoke4-rg'
+param containerImage string
 
-// Hub1のリソースグループを参照
-resource hub1Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: hub1ResourceGroup
-}
 
-// Spoke1のリソースグループを参照（または作成）
+// 変数定義
+var networkPrefix = '10.1'
+
+// 既存のリソースグループを参照
 resource spoke1Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
   name: rgName
 }
 
-// Hub1のVNetを参照
-resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' existing = {
-  name: vnetName
-  scope: hub1Rg
+// VNet 作成
+module vnet '../modules/vnet.bicep' = {
+  name: '${role}-vnet'
+  scope: resourceGroup(spoke1Rg.name)
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    location: location
+    addressSpace: '${networkPrefix}.0.0/16'
+  }
 }
 
-// Hub1のPrivate Endpoint用サブネットを参照
-resource caSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = {
-  name: '${development}-spoke1-ca-snet01'
-  parent: vnet
+// container apps用 NSG作成
+module caNsg '../modules/nsg/ca_nsg.bicep' = {
+  name: '${role}-ca-nsg'
+  scope: resourceGroup(spoke1Rg.name)
+  params: {
+    nsgName: '${development}-${role}-ca-nsg01'
+    location: location
+  }
 }
 
-// Spoke4のリソースグループを参照
-resource spoke4Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: acrRg
-}
+var subnets = [
+  { name: '${development}-spoke1-ca-snet01',  prefix: '${networkPrefix}.0.0/23', nsgType: 'ca', delegations: [] }
+]
 
-// Spoke4のACRを参照
-resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' existing = {
-  name: acrName
-  scope: spoke4Rg
-}
-
+// VNet モジュールが完了してから各サブネットを作成
+@batchSize(1)
+module subnetsMod '../modules/subnet.bicep' = [for (sn, i) in subnets: {
+  name: 'subnet-${i}-${sn.name}'
+  scope: resourceGroup(spoke1Rg.name)
+  dependsOn: [ vnet ]
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    subnetName: sn.name
+    addressPrefix: sn.prefix
+    networkSecurityGroupId: sn.nsgType == 'ca' ? caNsg.outputs.nsgId : ''
+    serviceEndpoints: []
+    privateLinkServiceNetworkPolicies: 'Enabled'
+    delegations: sn.delegations
+  }
+}]
 
 // Container Apps のマネージド環境
 module caEnv '../modules/container_apps_environment.bicep' = {
   name: '${role}-ca-env'
   scope: spoke1Rg
   params: {
-    name: '${development}-${role}-ca-env01'
+    name: '${development}-${role}-cae01'
     location: location
-    infrastructureSubnetId: caSubnet.id
+    infrastructureSubnetId: subnetsMod[0].outputs.subnetId
   }
 }
 
-// ===== Container App 作成 =====
+//  Container App 作成 
 module webca01 '../modules/container_app.bicep' = {
   name: '${role}-container-app01'
   scope: spoke1Rg
@@ -64,14 +79,13 @@ module webca01 '../modules/container_app.bicep' = {
     containerAppName: '${development}-${role}-ca01'
     location: location
     environmentId: caEnv.outputs.environmentId
-    containerImage: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+    containerImage: containerImage
     acrName: acrName
-    acrUsername: acr.listCredentials().username
-    acrPassword: acr.listCredentials().passwords[0].value
+    acrResourceGroupName: acrRg
   }
 }
 
-// ===== Container App 作成 =====
+//  Container App 作成 
 module webca02 '../modules/container_app.bicep' = {
   name: '${role}-container-app02'
   scope: spoke1Rg
@@ -79,10 +93,33 @@ module webca02 '../modules/container_app.bicep' = {
     containerAppName: '${development}-${role}-ca02'
     location: location
     environmentId: caEnv.outputs.environmentId
-    containerImage: 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
+    containerImage: containerImage
     acrName: acrName
-    acrUsername: acr.listCredentials().username
-    acrPassword: acr.listCredentials().passwords[0].value
+    acrResourceGroupName: acrRg
+  }
+}
+
+// ACR ロール割り当て（Container App 01用）
+module acrRole01 '../modules/acr_role_assignment.bicep' = {
+  name: '${role}-acr-role01'
+  scope: resourceGroup(acrRg)
+  dependsOn: [webca01]
+  params: {
+    acrName: acrName
+    principalId: webca01.outputs.systemAssignedIdentityPrincipalId
+    acrResourceGroupName: acrRg
+  }
+}
+
+// ACR ロール割り当て（Container App 02用）
+module acrRole02 '../modules/acr_role_assignment.bicep' = {
+  name: '${role}-acr-role02'
+  scope: resourceGroup(acrRg)
+  dependsOn: [webca02]
+  params: {
+    acrName: acrName
+    principalId: webca02.outputs.systemAssignedIdentityPrincipalId
+    acrResourceGroupName: acrRg
   }
 }
 

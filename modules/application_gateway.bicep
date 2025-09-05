@@ -16,7 +16,7 @@ resource applicationGateway 'Microsoft.Network/applicationGateways@2023-04-01' =
       // WAFポリシーが提供されている場合はWAF SKUを使用
       name: !empty(wafPolicyId) ? 'WAF_v2' : 'Standard_v2'
       tier: !empty(wafPolicyId) ? 'WAF_v2' : 'Standard_v2'
-      capacity: 2
+      capacity: 4
     }
     // WAFポリシーが提供されている場合は関連付け
     firewallPolicy: !empty(wafPolicyId) ? {

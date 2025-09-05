@@ -1,4 +1,3 @@
-
 targetScope = 'subscription'
 
 // パラメータ定義
@@ -6,36 +5,52 @@ param development string = 'poc'
 param role string = 'spoke3'
 param location string = 'japaneast'
 param rgName string = '${development}-${role}-rg'
-param hub1ResourceGroup string = '${development}-hub1-rg'
-param vnetName string = '${development}-hub1-vnet01'
-
-// Hub1のリソースグループを参照
-resource hub1Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: hub1ResourceGroup
-}
 
 // Spoke3のリソースグループを参照（または作成）
 resource spoke3Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
   name: rgName
 }
 
-// Hub1のVNetを参照
-resource hub1Vnet 'Microsoft.Network/virtualNetworks@2023-11-01' existing = {
-  name: vnetName
-  scope: hub1Rg
+// 変数定義
+var networkPrefix = '10.3'
+
+// VNet 作成
+module vnet '../modules/vnet.bicep' = {
+  name: '${role}-vnet'
+  scope: resourceGroup(spoke3Rg.name)
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    location: location
+    addressSpace: '${networkPrefix}.0.0/16'
+  }
 }
 
-// Hub1のPrivate Endpoint用サブネットを参照
-resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = {
-  name: '${development}-spoke3-pe-snet01'
-  parent: hub1Vnet
+var subnets = [
+  { name: '${development}-spoke3-pe-snet01',  prefix: '${networkPrefix}.0.0/24', pePolicies: 'Disabled', nsgType: 'none', delegations: [] }
+]
+
+// VNet モジュールが完了してから各サブネットを作成
+@batchSize(1)
+module subnetsMod '../modules/subnet.bicep' = [for (sn, i) in subnets: {
+  name: 'subnet-${i}-${sn.name}'
+  scope: resourceGroup(spoke3Rg.name)
+  dependsOn: [ vnet ]
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    subnetName: sn.name
+    addressPrefix: sn.prefix
+    serviceEndpoints: []
+    privateLinkServiceNetworkPolicies: 'Enabled'
+    delegations: sn.delegations
+  }
+}]
+
+// 既存のPrivate DNS Zoneを参照（spoke4で作成されたもの）
+resource existingBlobPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = {
+  name: 'privatelink.blob.${environment().suffixes.storage}'
+  scope: resourceGroup('${development}-spoke4-rg')
 }
 
-// Hub1のPrivate Endpoint用サブネットを参照
-resource vmSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = {
-  name: '${development}-spoke3-vm-snet01'
-  parent: hub1Vnet
-}
 
 // HDInsightクラスター作成
 module dataLakeStorage '../modules/data_Lake_Storage_Gen2.bicep' = {
@@ -55,32 +70,20 @@ module dataLakeStorage '../modules/data_Lake_Storage_Gen2.bicep' = {
 }
 
 // Private Endpoint作成
-module privateEndpoint '../modules/private_endpoint.bicep' = {
+module datast_privateEndpoint '../modules/private_endpoint.bicep' = {
   name: '${role}-storage-pe'
   scope: spoke3Rg
   params: {
     privateEndpointName: '${development}${role}datast01-pe01'
     location: location
-    vnetId: hub1Vnet.id
-    subnetId: peSubnet.id
+    vnetId: vnet.outputs.vnetId
+    subnetId: subnetsMod[0].outputs.subnetId
     targetResourceId: dataLakeStorage.outputs.storageAccountId
     groupIds: [ 'blob' ]
-    privateDnsZoneName: 'privatelink.blob.${environment().suffixes.storage}'  
+    privateDnsZoneName: existingBlobPrivateDnsZone.id
   }
 }
 
-// VM 作成
-module vm '../modules/vm.bicep' = {
-  name: '${role}-vm'
-  scope: spoke3Rg
-  params: {
-    vmName: '${development}-${role}-vm01'
-    location: location
-    subnetId: vmSubnet.id
-    adminUsername: 'vmadmin'
-    adminPassword: 'Headwaters1234&'
-  }
-  }
 
 // 現在のユーザーのオブジェクトID（デプロイ時に指定が必要）
 param currentUserObjectId string = ''

@@ -52,7 +52,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-03-01' = {
         version: 'latest'
       }
       osDisk: {
-        name: '${vmName}-osdisk'
+        name: '${vmName}-disk'
         caching: 'ReadWrite'
         createOption: 'FromImage'
         managedDisk: {

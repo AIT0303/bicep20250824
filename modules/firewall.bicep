@@ -5,24 +5,42 @@ param publicIpId string
 param skuTier string = 'Standard'
 param threatIntelMode string = 'Alert'
 param tags object = {}
+param FirewallPublicIP string
 
 // NAT Rules用のパラメータ
-param natRules array = []
-/*
-natRules配列の例:
-[
+param natRules array = [
   {
     name: 'SSH-NAT'
-    description: 'SSH接続用NAT'
-    sourceAddresses: ['*']
-    destinationAddresses: ['パブリックIPアドレス']
+    description: '外部からVMへのSSH接続用'
+    sourceAddresses: ['*']  // 任意の送信元
+    destinationAddresses: [FirewallPublicIP]
     destinationPorts: ['22']
     protocols: ['TCP']
-    translatedAddress: '10.0.1.4'
+    translatedAddress: '10.0.1.4'   // 内部VMのPrivate IP
     translatedPort: '22'
   }
+  {
+    name: 'HTTP-NAT'
+    description: 'WebサーバーHTTP公開用'
+    sourceAddresses: ['*']
+    destinationAddresses: [FirewallPublicIP]
+    destinationPorts: ['80']
+    protocols: ['TCP']
+    translatedAddress: '10.0.1.5'   // 内部WebサーバーのPrivate IP
+    translatedPort: '80'
+  }
+  {
+    name: 'HTTPS-NAT'
+    description: 'WebサーバーHTTPS公開用'
+    sourceAddresses: ['*']
+    destinationAddresses: [FirewallPublicIP]
+    destinationPorts: ['443']
+    protocols: ['TCP']
+    translatedAddress: '10.0.1.5'   // 同じWebサーバーでもOK
+    translatedPort: '443'
+  }
 ]
-*/
+
 
 // Azure Firewall Policy作成（NATルール含む）
 resource firewallPolicy 'Microsoft.Network/firewallPolicies@2023-11-01' = {

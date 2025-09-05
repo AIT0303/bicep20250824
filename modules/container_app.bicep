@@ -3,16 +3,23 @@ param location string
 param environmentId string
 param containerImage string
 param acrName string
-param acrUsername string
-@secure()
-param acrPassword string
 param tags object = {}
+param acrResourceGroupName string
 
-// Container App リソースの作成
+// 既存のACRを参照
+resource existingAcr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' existing = {
+  name: acrName
+  scope: resourceGroup(acrResourceGroupName)
+}
+
+// Container App リソースの作成（システム割り当てマネージドIDを使用）
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
   tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     environmentId: environmentId
     configuration: {
@@ -24,15 +31,8 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
       }
       registries: [
         {
-          server: '${acrName}.azurecr.io'
-          username: acrUsername
-          passwordSecretRef: 'acr-password'
-        }
-      ]
-      secrets: [
-        {
-          name: 'acr-password'
-          value: acrPassword
+          server: existingAcr.properties.loginServer
+          identity: 'system'
         }
       ]
     }
@@ -48,7 +48,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: 3
         maxReplicas: 10
         rules: [
           {
@@ -68,3 +68,5 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
 output containerAppId string = containerApp.id
 output containerAppName string = containerApp.name
 output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
+output systemAssignedIdentityPrincipalId string = containerApp.identity.principalId
+output systemAssignedIdentityTenantId string = containerApp.identity.tenantId

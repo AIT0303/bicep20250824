@@ -52,12 +52,10 @@ resource synapseWorkspace 'Microsoft.Synapse/workspaces@2021-06-01' = {
     
     // マネージドリソースグループ
     managedResourceGroupName: managedResourceGroupName
-    
     // 暗号化設定
     encryption: {
       doubleEncryptionEnabled: isDoubleEncryptionEnabled
     }
-    
     // 認証設定（ローカル認証とMicrosoft Entra ID認証の両方を使用）
     azureADOnlyAuthentication: false
   }
@@ -66,7 +64,6 @@ resource synapseWorkspace 'Microsoft.Synapse/workspaces@2021-06-01' = {
 // Storage Blob Data Contributor ロールの定義ID
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 
-// ワークスペースのマネージドIDに Storage Blob Data Contributor ロールを割り当て
 resource workspaceRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccount.id, synapseWorkspace.id, storageBlobDataContributorRoleId)
   scope: storageAccount

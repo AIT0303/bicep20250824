@@ -1,6 +1,6 @@
 param location string
 param name string
-param logAnalyticsName string
+param logAnalyticsid string
 param tags object = {}
 
 // Application Insights
@@ -11,7 +11,7 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
   tags: tags
   properties: {
     Application_Type: 'web'
-    WorkspaceResourceId: logAnalyticsName
+    WorkspaceResourceId: logAnalyticsid
     publicNetworkAccessForIngestion: 'Disabled'
     publicNetworkAccessForQuery: 'Disabled'
     SamplingPercentage: 100

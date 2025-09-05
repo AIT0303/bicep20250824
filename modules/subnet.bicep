@@ -6,7 +6,7 @@ param routeTableId string = ''
 param serviceEndpoints array = []
 param privateEndpointNetworkPolicies string = 'Disabled'
 param privateLinkServiceNetworkPolicies string = 'Enabled'
-param delegations array = []
+param delegations array
 
 // 既存のVNetを参照
 resource existingVnet 'Microsoft.Network/virtualNetworks@2023-04-01' existing = {

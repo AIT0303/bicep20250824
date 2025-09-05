@@ -99,6 +99,3 @@ resource diagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-pr
 output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
 output storageAccountPrimaryEndpoints string = storageAccount.properties.primaryEndpoints.blob
-@secure()
-output storageAccountKey string = storageAccount.listKeys().keys[0].value
-

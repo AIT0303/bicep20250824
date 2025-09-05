@@ -1,4 +1,3 @@
-
 targetScope = 'subscription'
 
 // パラメータ定義
@@ -6,12 +5,13 @@ param development string = 'poc'
 param role string = 'spoke4'
 param location string = 'japaneast'
 param rgName string = '${development}-${role}-rg'
-param hub1ResourceGroup string = '${development}-hub1-rg'
-param vnetName string = '${development}-hub1-vnet01'
 
-// Hub1のリソースグループを参照
-resource hub1Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
-  name: hub1ResourceGroup
+// 変数定義
+var networkPrefix = '10.4'
+
+// 既存のリソースグループを参照
+resource existingRg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
+  name: rgName
 }
 
 // Spoke4のリソースグループを参照（または作成）
@@ -19,18 +19,36 @@ resource spoke4Rg 'Microsoft.Resources/resourceGroups@2023-07-01' existing = {
   name: rgName
 }
 
-// Hub1のVNetを参照
-resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' existing = {
-  name: vnetName
-  scope: hub1Rg
+// VNet 作成
+module vnet '../modules/vnet.bicep' = {
+  name: '${role}-vnet'
+  scope: resourceGroup(existingRg.name)
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    location: location
+    addressSpace: '${networkPrefix}.0.0/16'
+  }
 }
 
-// Hub1のPrivate Endpoint用サブネットを参照
-resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-11-01' existing = {
-  name: '${development}-spoke4-pe-snet01'
-  parent: vnet
-}
+var subnets = [
+  { name: '${development}-spoke4-pe-snet01',  prefix: '${networkPrefix}.0.0/24', pePolicies: 'Disabled', nsgType: 'none', delegations: [] }
+]
 
+// VNet モジュールが完了してから各サブネットを作成
+@batchSize(1)
+module subnetsMod '../modules/subnet.bicep' = [for (sn, i) in subnets: {
+  name: 'subnet-${i}-${sn.name}'
+  scope: resourceGroup(existingRg.name)
+  dependsOn: [ vnet ]
+  params: {
+    vnetName: '${development}-${role}-vnet01'
+    subnetName: sn.name
+    addressPrefix: sn.prefix
+    serviceEndpoints: []
+    privateLinkServiceNetworkPolicies: 'Enabled'
+    delegations: sn.delegations
+  }
+}]
 
 // Storage Account (Private Endpoint接続対象の例)
 module logst '../modules/logst.bicep' = {
@@ -46,20 +64,20 @@ module logst '../modules/logst.bicep' = {
 }
 
 // Private Endpoint作成
-module privateEndpoint '../modules/private_endpoint.bicep' = {
+module logst_privateEndpoint '../modules/private_endpoint.bicep' = {
   name: '${role}-logst-pe'
   scope: spoke4Rg
   params: {
     privateEndpointName: '${development}${role}logst01-pe01'
     location: location
-    vnetId: vnet.id
-    subnetId: peSubnet.id
+    vnetId: vnet.outputs.vnetId
+    subnetId: subnetsMod[0].outputs.subnetId
     targetResourceId: logst.outputs.logstId
     groupIds: [ 'blob' ]
     privateDnsZoneName: 'privatelink.blob.${environment().suffixes.storage}'  
   }
 }
-
+/*
 // Key Vault用の追加パラメータ
 param tenantId string = tenant().tenantId
 param objectId string ='95dad140-2422-4cd5-a2e7-2143de1f53d3'
@@ -71,7 +89,7 @@ module keyVault '../modules/keyvault.bicep' = {
   name: '${role}-keyvault'
   scope: spoke4Rg
   params: {
-    name: '${development}-${role}-kv02'
+    name: '${development}-${role}-kv03'
     location: location
     tenantId: tenantId
     objectId: objectId
@@ -88,14 +106,14 @@ module keyVaultPrivateEndpoint '../modules/private_endpoint.bicep' = {
   params: {
     privateEndpointName: '${development}-${role}-kv01-pe01'
     location: location
-    vnetId: vnet.id
-    subnetId: peSubnet.id
+    vnetId: vnet.outputs.vnetId
+    subnetId: subnetsMod[0].outputs.subnetId
     targetResourceId: keyVault.outputs.keyVaultId
     groupIds: ['vault']
     privateDnsZoneName: 'privatelink.vaultcore.azure.net'
   }
 }
-
+*/
 
 // Azure Container Registry作成
 module acr '../modules/acr.bicep' = {
@@ -106,6 +124,8 @@ module acr '../modules/acr.bicep' = {
     location: location
     sku: 'Premium'
     allowedIpRanges: []
+    logAnalyticsWorkspaceId: logAnalytics.outputs.logAnalyticsWorkspaceId
+    storageAccountId: logst.outputs.logstId
   }
 }
 
@@ -116,8 +136,8 @@ module acrPrivateEndpoint '../modules/private_endpoint.bicep' = {
   params: {
     privateEndpointName: '${development}${role}acr01-pe01'
     location: location
-    vnetId: vnet.id
-    subnetId: peSubnet.id
+    vnetId: vnet.outputs.vnetId
+    subnetId: subnetsMod[0].outputs.subnetId
     targetResourceId: acr.outputs.acrId
     groupIds: ['registry']
     privateDnsZoneName: 'privatelink.azurecr.io'
@@ -139,7 +159,7 @@ module appInsights '../modules/appinsights.bicep' = {
   params: {
     name: '${development}-${role}-appi01'
     location: location
-    logAnalyticsName:logAnalytics.outputs.logAnalyticsWorkspaceName
+    logAnalyticsid:logAnalytics.outputs.logAnalyticsWorkspaceId
     }
 }
 
@@ -150,8 +170,8 @@ module ampls '../modules/ampls.bicep' = {
   params: {
     privateLinkScopeName: '${development}-${role}-ampls01'
     privateEndpointLocation: location
-    vnetId: vnet.id
-    subnetId: peSubnet.id
+    vnetId: vnet.outputs.vnetId
+    subnetId: subnetsMod[0].outputs.subnetId
     logAnalyticsWorkspaceId: logAnalytics.outputs.logAnalyticsWorkspaceId
     appInsightsId: appInsights.outputs.applicationInsightsId
     privateEndpointName: '${development}-${role}-ampls01-pe01'
